@@ -1,0 +1,74 @@
+blueprint:
+  name: Ensure Multiple Devices Are On with Generic Exception (Fixed Interval)
+  description: >
+    Checks specified devices at a defined interval, and if any have been off longer than a specified duration,
+    turns them on. Skips the check if a generic exception entity is on.
+  domain: automation
+  input:
+    target_devices:
+      name: Devices to monitor
+      description: The switches or devices to ensure stay on
+      selector:
+        entity:
+          domain: switch
+          multiple: true
+    check_interval:
+      name: Check Interval
+      description: How often to check the devices (in seconds)
+      default: 60
+      selector:
+        number:
+          min: 10
+          max: 3600
+          unit_of_measurement: seconds
+    min_off_duration:
+      name: Minimum Off Duration
+      description: Only turn on a device if it has been off for longer than this duration (in seconds)
+      default: 60
+      selector:
+        number:
+          min: 1
+          max: 3600
+          unit_of_measurement: seconds
+    exception_entity:
+      name: Exception Entity
+      description: Skip automation if this entity is on. Can be any entity that uses on/off states.
+      default: none
+      selector:
+        entity: {}
+
+trigger:
+  - platform: time_pattern
+    minutes: "*"
+
+action:
+  - repeat:
+      while:
+        - condition: template
+          value_template: "true"
+      sequence:
+        - condition: template
+          value_template: >
+            {% if exception_entity %}
+              {{ is_state(exception_entity, 'off') }}
+            {% else %}
+              true
+            {% endif %}
+        - repeat:
+            for_each: !input target_devices
+            sequence:
+              - condition: template
+                value_template: >
+                  {% set device = repeat.item %}
+                  {% set last_changed = states(device).last_changed.timestamp() | int %}
+                  {% set current_time = now().timestamp() | int %}
+                  {{ states(device) is not none and
+                     states(device).state == 'off' and
+                     (current_time - last_changed) > (min_off_duration | int) }}
+              - service: switch.turn_on
+                target:
+                  entity_id: "{{ repeat.item }}"
+        - delay:
+            seconds: !input check_interval
+
+mode: single
